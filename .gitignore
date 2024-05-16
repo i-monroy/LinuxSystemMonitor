@@ -2,3 +2,5 @@ build/
 *.o
 *.exe
 
+disk_usage
+memory_usage

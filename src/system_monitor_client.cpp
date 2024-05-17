@@ -21,7 +21,6 @@ int main() {
     SOCKET sock = INVALID_SOCKET;
     struct sockaddr_in serv_addr;
     char buffer[1024] = {0};
-    std::string request = "GET CPU";  // Requesting CPU usage
 
     // Create socket
     sock = socket(AF_INET, SOCK_STREAM, 0);
@@ -33,37 +32,32 @@ int main() {
 
     serv_addr.sin_family = AF_INET;
     serv_addr.sin_port = htons(PORT);
-
-    // Convert IPv4 addresses from text to binary form
-    iResult = inet_pton(AF_INET, "192.168.1.67", &serv_addr.sin_addr);
-    if (iResult <= 0) {
-        std::cout << "Invalid address/ Address not supported" << std::endl;
-        closesocket(sock);
-        WSACleanup();
-        return 1;
-    }
+    inet_pton(AF_INET, "192.168.1.67", &serv_addr.sin_addr);
 
     // Connect to server
-    iResult = connect(sock, (struct sockaddr*)&serv_addr, sizeof(serv_addr));
-    if (iResult == SOCKET_ERROR) {
+    if (connect(sock, (struct sockaddr*)&serv_addr, sizeof(serv_addr)) == SOCKET_ERROR) {
         std::cout << "Connection failed: " << WSAGetLastError() << std::endl;
         closesocket(sock);
         WSACleanup();
         return 1;
     }
 
-    // Send request to server
-    send(sock, request.c_str(), request.length(), 0);
-    std::cout << "Request sent: " << request << std::endl;
+    // Multiple requests in the same session
+    std::string requests[] = {"GET CPU", "GET DISK"};
+    for (const std::string& request : requests) {
+        send(sock, request.c_str(), request.length(), 0);
+        std::cout << "Request sent: " << request << std::endl;
 
-    // Read response from server
-    int valread = recv(sock, buffer, 1024, 0);
-    if (valread > 0) {
-        std::cout << "Server: " << buffer << std::endl;
-    } else if (valread == 0) {
-        std::cout << "Connection closed" << std::endl;
-    } else {
-        std::cout << "recv failed: " << WSAGetLastError() << std::endl;
+        int valread = recv(sock, buffer, sizeof(buffer), 0); // Adjust size to sizeof(buffer) for safety
+        if (valread > 0) {
+            buffer[valread] = '\0'; // Ensure null termination
+            std::cout << "Server: " << buffer << std::endl;
+        } else if (valread == 0) {
+            std::cout << "Connection closed by server" << std::endl;
+            break; // Break the loop if server closes the connection
+        } else {
+            std::cout << "recv failed: " << WSAGetLastError() << std::endl;
+        }
     }
 
     // Cleanup

@@ -6,6 +6,7 @@
 #include <cstring>   // for memset()
 #include <iomanip>   // for std::setprecision
 #include "cpu_usage.h"  // Include the header file for CPU usage functions
+#include "disk_usage.h" // Include the header file for disk usage functions
 
 #define PORT 8080
 
@@ -17,14 +18,16 @@ void process_command(const std::string& command, int client_socket) {
         sleep(1);  // Wait a bit to get a new sample
         get_cpu_times(curr_cpu_time);  // Get updated CPU times
         float cpu_usage = calculate_cpu_usage(prev_cpu_time, curr_cpu_time);  // Calculate CPU usage
-        
         std::ostringstream stream;
         stream << std::fixed << std::setprecision(2) << cpu_usage;  // Format to two decimal places
         response = "CPU Usage: " + stream.str() + "%";  // Create response string with formatted CPU usage
+    } else if (command == "GET DISK") {
+        response = DiskUsage::get_disk_usage("/");  // Fetch disk usage using the static function from DiskUsage class
     } else {
         response = "Unknown command";
     }
     send(client_socket, response.c_str(), response.length(), 0);  // Send response back to client
+    std::cout << "Response sent: " << response << std::endl; // Debug print
 }
 
 int main() {
@@ -60,16 +63,23 @@ int main() {
             continue;  // Continue to accept next connections
         }
 
-        memset(buffer, 0, sizeof(buffer));  // Clear buffer
-        long valread = read(client_socket, buffer, 1023);  // Read data sent by the client, ensure buffer is null-terminated
-        if (valread < 0) {
-            std::cerr << "Failed to read from socket." << std::endl;
-            close(client_socket);
-            continue;
+        // Keep connection open to handle multiple requests
+        while (true) {
+            memset(buffer, 0, sizeof(buffer));  // Clear buffer
+            long valread = read(client_socket, buffer, 1023);  // Read data sent by the client, ensure buffer is null-terminated
+            if (valread < 0) {
+                std::cerr << "Failed to read from socket." << std::endl;
+                break;  // Break the loop and close the socket on error
+            }
+            if (valread == 0) {
+                std::cout << "Client disconnected." << std::endl;
+                break;  // Break the loop if client disconnects cleanly
+            }
+
+            std::string command(buffer, valread);  // Convert to string for easier processing
+            process_command(command, client_socket);  // Process received command
         }
 
-        std::string command(buffer, valread);  // Convert to string for easier processing
-        process_command(command, client_socket);  // Process received command
         close(client_socket);  // Close the connection
     }
 

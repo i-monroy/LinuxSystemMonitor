@@ -32,7 +32,7 @@ int main() {
 
     serv_addr.sin_family = AF_INET;
     serv_addr.sin_port = htons(PORT);
-    inet_pton(AF_INET, "192.168.1.67", &serv_addr.sin_addr);
+    inet_pton(AF_INET, "192.168.1.82", &serv_addr.sin_addr); // Use the current IP of your Raspberry Pi
 
     // Connect to server
     if (connect(sock, (struct sockaddr*)&serv_addr, sizeof(serv_addr)) == SOCKET_ERROR) {
@@ -43,7 +43,7 @@ int main() {
     }
 
     // Multiple requests in the same session
-    std::string requests[] = {"GET CPU", "GET DISK"};
+    std::string requests[] = {"GET CPU", "GET DISK", "GET MEM", "GET NET"};
     for (const std::string& request : requests) {
         send(sock, request.c_str(), request.length(), 0);
         std::cout << "Request sent: " << request << std::endl;

@@ -7,6 +7,8 @@
 #include <iomanip>   // for std::setprecision
 #include "cpu_usage.h"  // Include the header file for CPU usage functions
 #include "disk_usage.h" // Include the header file for disk usage functions
+#include "memory_usage.h"
+#include "network_stats.h"
 
 #define PORT 8080
 
@@ -23,6 +25,10 @@ void process_command(const std::string& command, int client_socket) {
         response = "CPU Usage: " + stream.str() + "%";  // Create response string with formatted CPU usage
     } else if (command == "GET DISK") {
         response = DiskUsage::get_disk_usage("/");  // Fetch disk usage using the static function from DiskUsage class
+    } else if (command == "GET MEM") {
+        response = MemoryUsage::get_memory_usage();  // Fetch memory usage using the static function from MemoryUsage class
+    } else if (command == "GET NET"){
+        response =NetworkStats::get_network_stats("wlan0");
     } else {
         response = "Unknown command";
     }

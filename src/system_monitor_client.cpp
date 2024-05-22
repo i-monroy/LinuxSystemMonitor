@@ -1,13 +1,17 @@
 #include <iostream>
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <openssl/ssl.h>
+#include <openssl/err.h>
 #include <string>
 
 #pragma comment(lib, "Ws2_32.lib")
+#pragma comment(lib, "libssl.lib")
+#pragma comment(lib, "libcrypto.lib")
 
 #define PORT 8080
-#define SERVER_IP "192.168.1.82"  // Replace with the actual server IP
-#define MAX_RETRIES 5
+#define SERVER_IP "192.168.1.82"  // Adjust as needed
+#define API_KEY "4ee511cfc743e7033b7451e090c6b00b" // Your generated API key
 
 void printHelp() {
     std::cout << "\nAvailable Commands:\n"
@@ -19,38 +23,61 @@ void printHelp() {
               << "  EXIT           - Exit the client\n\n";
 }
 
-int connectToServer(SOCKET& sock, struct sockaddr_in& serv_addr) {
-    int attempts = 0;
-    while (connect(sock, (struct sockaddr*)&serv_addr, sizeof(serv_addr)) == SOCKET_ERROR) {
-        if (++attempts >= MAX_RETRIES) return -1; // Exceeded max retry attempts
-        std::cout << "Connection failed, retrying..." << std::endl;
-        Sleep(2000); // Wait for 2 seconds before trying again
-    }
-    return 0;
-}
-
 int main() {
     WSADATA wsaData;
-    int iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
-    if (iResult != 0) {
-        std::cout << "WSAStartup failed: " << iResult << std::endl;
+    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
+        std::cerr << "WSAStartup failed.\n";
         return 1;
     }
 
     SOCKET sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock == INVALID_SOCKET) {
-        std::cout << "Socket creation error: " << WSAGetLastError() << std::endl;
+        std::cerr << "Socket creation error: " << WSAGetLastError() << '\n';
         WSACleanup();
         return 1;
     }
 
-    struct sockaddr_in serv_addr{};
+    sockaddr_in serv_addr {};
     serv_addr.sin_family = AF_INET;
     serv_addr.sin_port = htons(PORT);
     inet_pton(AF_INET, SERVER_IP, &serv_addr.sin_addr);
 
-    if (connectToServer(sock, serv_addr) < 0) {
-        std::cout << "Unable to connect to server after several attempts." << std::endl;
+    SSL_library_init();
+    OpenSSL_add_ssl_algorithms();
+    SSL_load_error_strings();
+    SSL_CTX* ctx = SSL_CTX_new(TLS_client_method());
+    if (!ctx) {
+        std::cerr << "SSL_CTX creation failed.\n";
+        closesocket(sock);
+        WSACleanup();
+        return 1;
+    }
+
+    SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, nullptr);
+    if (!SSL_CTX_load_verify_locations(ctx, "C:\\Users\\monro\\MyApp\\certs\\ca.pem", nullptr)) {
+        std::cerr << "Failed to load CA certificate.\n";
+        SSL_CTX_free(ctx);
+        closesocket(sock);
+        WSACleanup();
+        return 1;
+    }
+
+    SSL* ssl = SSL_new(ctx);
+    SSL_set_fd(ssl, sock);
+
+    if (connect(sock, (sockaddr*)&serv_addr, sizeof(serv_addr)) == SOCKET_ERROR) {
+        std::cerr << "Connection failed: " << WSAGetLastError() << '\n';
+        SSL_free(ssl);
+        SSL_CTX_free(ctx);
+        closesocket(sock);
+        WSACleanup();
+        return 1;
+    }
+
+    if (SSL_connect(ssl) != 1) {
+        std::cerr << "SSL connection failed: " << SSL_get_error(ssl, 0) << '\n';
+        SSL_free(ssl);
+        SSL_CTX_free(ctx);
         closesocket(sock);
         WSACleanup();
         return 1;
@@ -64,31 +91,35 @@ int main() {
         std::cout << "Enter command: ";
         std::getline(std::cin, input);
         if (input == "EXIT") {
-            std::cout << "Exiting client." << std::endl;
+            std::cout << "Exiting client.\n";
             break;
         } else if (input == "HELP") {
             printHelp();
             continue;
         }
 
-        send(sock, input.c_str(), input.length(), 0);
-        std::cout << "Request sent: " << input << std::endl;
+        std::string full_command = std::string(API_KEY) + ":" + input; // Correctly form the full command
+        SSL_write(ssl, full_command.c_str(), full_command.length());
+        std::cout << "Request sent: " << input << '\n';
 
-        int valread = recv(sock, buffer, sizeof(buffer), 0);
+        int valread = SSL_read(ssl, buffer, sizeof(buffer)-1);
         if (valread > 0) {
             buffer[valread] = '\0';
-            std::cout << "Server: " << buffer << std::endl;
-        } else if (valread == 0) {
-            std::cout << "Connection closed by server. Attempting to reconnect..." << std::endl;
-            if (connectToServer(sock, serv_addr) < 0) {
-                std::cout << "Reconnection failed. Exiting..." << std::endl;
-                break;
-            }
+            std::cout << "Server: " << buffer << '\n';
         } else {
-            std::cout << "recv failed: " << WSAGetLastError() << std::endl;
+            int err = SSL_get_error(ssl, valread);
+            if (err == SSL_ERROR_ZERO_RETURN || err == SSL_ERROR_SYSCALL) {
+                std::cout << "Connection closed by server.\n";
+                break;
+            } else {
+                std::cout << "SSL read failed: " << ERR_error_string(err, nullptr) << '\n';
+            }
         }
     }
 
+    SSL_shutdown(ssl);
+    SSL_free(ssl);
+    SSL_CTX_free(ctx);
     closesocket(sock);
     WSACleanup();
     return 0;

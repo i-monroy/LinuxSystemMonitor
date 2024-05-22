@@ -3,6 +3,8 @@
 #include <unistd.h>  // sleep(), close()
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <openssl/ssl.h>
+#include <openssl/err.h>
 #include <cstring>   // for memset()
 #include <iomanip>   // for std::setprecision
 #include "cpu_usage.h"  // Include the header file for CPU usage functions
@@ -11,44 +13,70 @@
 #include "network_stats.h"
 
 #define PORT 8080
+const std::string API_KEY = "4ee511cfc743e7033b7451e090c6b00b"; // Your API key
 
-void process_command(const std::string& command, int client_socket) {
+void initializeSSL() {
+    SSL_load_error_strings();
+    OpenSSL_add_ssl_algorithms();
+}
+
+bool validate_api_key(const std::string& command, std::string& actual_command) {
+    size_t separator = command.find(':');
+    if (separator != std::string::npos) {
+        std::string key = command.substr(0, separator);
+        actual_command = command.substr(separator + 1);
+        return key == API_KEY;
+    }
+    return false;
+}
+
+void process_command(const std::string& command, SSL* ssl) {
+    std::string actual_command;
+    if (!validate_api_key(command, actual_command)) {
+        std::string response = "Invalid API key";
+        SSL_write(ssl, response.c_str(), response.length());
+        return;
+    }
+
     std::string response;
-    if (command == "GET CPU") {
-        CpuTime prev_cpu_time, curr_cpu_time;  // Define CPU time structures
-        get_cpu_times(prev_cpu_time);  // Get initial CPU times
-        sleep(1);  // Wait a bit to get a new sample
-        get_cpu_times(curr_cpu_time);  // Get updated CPU times
-        float cpu_usage = calculate_cpu_usage(prev_cpu_time, curr_cpu_time);  // Calculate CPU usage
+    if (actual_command == "GET CPU") {
+        CpuTime prev_cpu_time, curr_cpu_time;
+        get_cpu_times(prev_cpu_time);
+        sleep(1);
+        get_cpu_times(curr_cpu_time);
+        float cpu_usage = calculate_cpu_usage(prev_cpu_time, curr_cpu_time);
         std::ostringstream stream;
-        stream << std::fixed << std::setprecision(2) << cpu_usage;  // Format to two decimal places
-        response = "CPU Usage: " + stream.str() + "%";  // Create response string with formatted CPU usage
-    } else if (command == "GET DISK") {
-        response = DiskUsage::get_disk_usage("/");  // Fetch disk usage using the static function from DiskUsage class
-    } else if (command == "GET MEM") {
-        response = MemoryUsage::get_memory_usage();  // Fetch memory usage using the static function from MemoryUsage class
-    } else if (command == "GET NET"){
-        response =NetworkStats::get_network_stats("wlan0");
+        stream << std::fixed << std::setprecision(2) << cpu_usage;
+        response = "CPU Usage: " + stream.str() + "%";
+    } else if (actual_command == "GET DISK") {
+        response = DiskUsage::get_disk_usage("/");
+    } else if (actual_command == "GET MEM") {
+        response = MemoryUsage::get_memory_usage();
+    } else if (actual_command == "GET NET") {
+        response = NetworkStats::get_network_stats("wlan0");
     } else {
         response = "Unknown command";
     }
-    send(client_socket, response.c_str(), response.length(), 0);  // Send response back to client
-    std::cout << "Response sent: " << response << std::endl; // Debug print
+    SSL_write(ssl, response.c_str(), response.length());  // Send response back to client using SSL
 }
 
 int main() {
+    initializeSSL();
+
     int server_fd, client_socket;
     struct sockaddr_in address;
     socklen_t addrlen = sizeof(address);
-    char buffer[1024] = {0};
+    SSL_CTX* ctx = SSL_CTX_new(TLS_server_method());
 
-    // Creating socket file descriptor
+    SSL_CTX_use_certificate_file(ctx, "server.crt", SSL_FILETYPE_PEM);
+    SSL_CTX_use_PrivateKey_file(ctx, "server.key", SSL_FILETYPE_PEM);
+
     if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
         perror("socket failed");
         exit(EXIT_FAILURE);
     }
 
-    memset(&address, 0, sizeof(address));  // Clear structure
+    memset(&address, 0, sizeof(address));
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = INADDR_ANY;
     address.sin_port = htons(PORT);
@@ -66,29 +94,38 @@ int main() {
     while (true) {
         if ((client_socket = accept(server_fd, (struct sockaddr *)&address, &addrlen)) < 0) {
             perror("accept");
-            continue;  // Continue to accept next connections
+            continue;
         }
 
-        // Keep connection open to handle multiple requests
-        while (true) {
-            memset(buffer, 0, sizeof(buffer));  // Clear buffer
-            long valread = read(client_socket, buffer, 1023);  // Read data sent by the client, ensure buffer is null-terminated
-            if (valread < 0) {
-                std::cerr << "Failed to read from socket." << std::endl;
-                break;  // Break the loop and close the socket on error
-            }
-            if (valread == 0) {
-                std::cout << "Client disconnected." << std::endl;
-                break;  // Break the loop if client disconnects cleanly
-            }
+        SSL* ssl = SSL_new(ctx);
+        SSL_set_fd(ssl, client_socket);
 
-            std::string command(buffer, valread);  // Convert to string for easier processing
-            process_command(command, client_socket);  // Process received command
+        if (SSL_accept(ssl) <= 0) {
+            ERR_print_errors_fp(stderr);
+        } else {
+            char buffer[1024] = {0};
+            while (true) {
+                memset(buffer, 0, sizeof(buffer));
+                int valread = SSL_read(ssl, buffer, sizeof(buffer)-1);
+                if (valread <= 0) {
+                    int err = SSL_get_error(ssl, valread);
+                    if (err == SSL_ERROR_ZERO_RETURN || err == SSL_ERROR_SYSCALL) {
+                        std::cout << "Client disconnected.\n";
+                        break;
+                    }
+                } else {
+                    std::string command(buffer, valread);
+                    process_command(command, ssl);
+                }
+            }
         }
 
-        close(client_socket);  // Close the connection
+        SSL_shutdown(ssl);
+        SSL_free(ssl);
+        close(client_socket);
     }
 
-    close(server_fd);  // Close the server socket
+    SSL_CTX_free(ctx);
+    close(server_fd);
     return 0;
 }

@@ -11,6 +11,11 @@
 #include "disk_usage.h" // Include the header file for disk usage functions
 #include "memory_usage.h"
 #include "network_stats.h"
+#include <iostream>
+#include <string>
+#include <curl/curl.h>
+#include <thread>
+#include <chrono>
 
 #define PORT 8080
 const std::string API_KEY = "4ee511cfc743e7033b7451e090c6b00b"; // Your API key
@@ -28,6 +33,48 @@ bool validate_api_key(const std::string& command, std::string& actual_command) {
         return key == API_KEY;
     }
     return false;
+}
+
+static size_t WriteCallback(void *contents, size_t size, size_t nmemb, std::string *s) {
+    size_t newLength = size * nmemb;
+    try {
+        s->append((char*)contents, newLength);
+        return newLength;
+    }
+    catch (std::bad_alloc &e) {
+        // handle memory problem
+        return 0;
+    }
+}
+
+void check_version(); // Forward declaration
+
+// Function to periodically check for updates
+void periodic_version_check() {
+    while (true) {
+        check_version();
+        std::this_thread::sleep_for(std::chrono::minutes(2));  // Check every hour
+    }
+}
+
+void check_version() {
+    CURL *curl;
+    CURLcode res;
+    std::string readBuffer;
+
+    curl = curl_easy_init();
+    if(curl) {
+        curl_easy_setopt(curl, CURLOPT_URL, "http://localhost:5000/version-check");
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &readBuffer);
+        res = curl_easy_perform(curl);
+        if(res != CURLE_OK) {
+            std::cerr << "curl_easy_perform() failed: " << curl_easy_strerror(res) << std::endl;
+        } else {
+            std::cout << "Received: " << readBuffer << std::endl;
+        }
+        curl_easy_cleanup(curl);
+    }
 }
 
 void process_command(const std::string& command, SSL* ssl) {
@@ -61,6 +108,8 @@ void process_command(const std::string& command, SSL* ssl) {
 }
 
 int main() {
+    std::thread version_thread(periodic_version_check);  // Start the version check in a separate thread
+    
     initializeSSL();
 
     int server_fd, client_socket;
@@ -125,6 +174,7 @@ int main() {
         close(client_socket);
     }
 
+    version_thread.join();  // Wait for the version checking thread to finish if ever
     SSL_CTX_free(ctx);
     close(server_fd);
     return 0;

@@ -13,12 +13,21 @@
 #include "network_stats.h"
 #include <iostream>
 #include <string>
+#include <nlohmann/json.hpp>
+#include <fstream>
 #include <curl/curl.h>
 #include <thread>
 #include <chrono>
+#include <openssl/sha.h>
+#include <cstdlib>
+#include <fstream>
+#include <cctype>
+
 
 #define PORT 8080
 const std::string API_KEY = "4ee511cfc743e7033b7451e090c6b00b"; // Your API key
+
+using json = nlohmann::json;
 
 void initializeSSL() {
     SSL_load_error_strings();
@@ -47,17 +56,97 @@ static size_t WriteCallback(void *contents, size_t size, size_t nmemb, std::stri
     }
 }
 
+// Helper function to download file
+static size_t write_data(void *ptr, size_t size, size_t nmemb, FILE *stream) {
+    size_t written = fwrite(ptr, size, nmemb, stream);
+    return written;
+}
+
+void download_update(const std::string& url, const std::string& output_path) {
+    CURL *curl;
+    FILE *fp;
+    CURLcode res;
+
+    curl = curl_easy_init();
+    if (curl) {
+        fp = fopen(output_path.c_str(),"wb");
+        if (!fp) {
+            std::cerr << "Failed to open file for writing: " << output_path << std::endl;
+            curl_easy_cleanup(curl);
+            return;  // Exit if file cannot be opened
+        }
+
+        curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_data);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, fp);
+        res = curl_easy_perform(curl);
+        fclose(fp);  // Close the file pointer here to avoid leaks
+
+        if(res != CURLE_OK) {
+            std::cerr << "Failed to download update: " << curl_easy_strerror(res) << std::endl;
+        } else {
+            std::cout << "Update downloaded successfully." << std::endl;
+        }
+        curl_easy_cleanup(curl);
+    }
+}
+
+
+std::string calculate_sha256(const std::string& file_path) {
+    unsigned char hash[SHA256_DIGEST_LENGTH];
+    SHA256_CTX sha256;
+    SHA256_Init(&sha256);
+
+    std::ifstream file(file_path, std::ifstream::binary);
+    if (!file) {
+        std::cerr << "Cannot open file: " << file_path << std::endl;
+        return "";
+    }
+
+    const int bufSize = 32768;
+    char* buffer = new char[bufSize];
+    while (file.good()) {
+        file.read(buffer, bufSize);
+        SHA256_Update(&sha256, buffer, file.gcount());
+    }
+
+    SHA256_Final(hash, &sha256);
+    file.close();
+    delete[] buffer;
+
+    std::stringstream ss;
+    for(int i = 0; i < SHA256_DIGEST_LENGTH; i++) {
+        ss << std::hex << std::setw(2) << std::setfill('0') << (int)hash[i];
+    }
+
+    return ss.str();
+}
+
+void apply_update(const std::string& path) {
+    std::cout << "Applying update from: " << path << std::endl;
+    // Example command to replace an executable file (adjust as needed)
+    std::string command = "cp " + path + " ./build/system_monitor_server";
+    std::system(command.c_str());
+    std::cout << "Update applied. Restart the application to use the updated version." << std::endl;
+}
+
+void log_message(const std::string& message) {
+    std::ofstream logFile("update_log.txt", std::ios::app); // Open in append mode
+    logFile << message << std::endl;
+}
+
 void check_version(); // Forward declaration
 
 // Function to periodically check for updates
-void periodic_version_check() {
+void periodic_version_check(int intervalMinutes) {
     while (true) {
         check_version();
-        std::this_thread::sleep_for(std::chrono::minutes(2));  // Check every hour
+        std::this_thread::sleep_for(std::chrono::minutes(intervalMinutes));
     }
 }
 
 void check_version() {
+    log_message("Checking for updates...");
     CURL *curl;
     CURLcode res;
     std::string readBuffer;
@@ -68,12 +157,35 @@ void check_version() {
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, &readBuffer);
         res = curl_easy_perform(curl);
-        if(res != CURLE_OK) {
-            std::cerr << "curl_easy_perform() failed: " << curl_easy_strerror(res) << std::endl;
-        } else {
-            std::cout << "Received: " << readBuffer << std::endl;
-        }
         curl_easy_cleanup(curl);
+
+        if(res == CURLE_OK) {
+            log_message("Update check successful.");
+            json response = json::parse(readBuffer);
+            std::string latest_version = response["version"];
+            std::string update_url = response["update_url"];
+            std::string expected_checksum = response["checksum"]; // Make sure this key exists in your Python server response
+            
+            std::string current_version = "1.0.0"; // Assume current version is defined elsewhere or hardcoded
+            if(latest_version != current_version) {
+                std::cout << "New version available: " << latest_version << std::endl;
+                std::string download_path = "./update.zip";
+                download_update(update_url, download_path);
+
+                std::string actual_checksum = calculate_sha256(download_path);
+                if(actual_checksum == expected_checksum) {
+                    std::cout << "Checksum verification successful. Update is valid." << std::endl;
+                    apply_update(download_path); // Apply the update
+                } else {
+                    std::cerr << "Checksum verification failed. Update is not valid." << std::endl;
+                }
+            } else {
+                std::cout << "No updates available." << std::endl;
+            }
+        } else {
+            log_message("Failed to check for updates: " + std::string(curl_easy_strerror(res)));
+            std::cerr << "Failed to check for updates: " << curl_easy_strerror(res) << std::endl;
+        }
     }
 }
 
@@ -107,8 +219,20 @@ void process_command(const std::string& command, SSL* ssl) {
     SSL_write(ssl, response.c_str(), response.length());  // Send response back to client using SSL
 }
 
-int main() {
-    std::thread version_thread(periodic_version_check);  // Start the version check in a separate thread
+int main(int argc, char* argv[]) {
+    int checkInterval = 60; // Default interval in minutes
+    if (argc > 1) {
+        std::string arg = argv[1];
+        // Check if all characters in the argument are digits
+        if (std::all_of(arg.begin(), arg.end(), ::isdigit)) {
+            checkInterval = std::stoi(arg); // Convert string to integer safely
+        } else {
+            std::cerr << "Invalid interval argument. Please provide a numeric value." << std::endl;
+            return 1; // Return error code
+        }
+    }
+
+    std::thread version_thread([checkInterval]() { periodic_version_check(checkInterval); });
     
     initializeSSL();
 

@@ -24,7 +24,7 @@
 #include <cctype>
 
 
-#define PORT 8080
+#define PORT 8000
 const std::string API_KEY = "4ee511cfc743e7033b7451e090c6b00b"; // Your API key
 
 using json = nlohmann::json;

@@ -16,12 +16,13 @@
 #include <nlohmann/json.hpp>
 #include <fstream>
 #include <curl/curl.h>
-#include <thread>
 #include <chrono>
 #include <openssl/sha.h>
 #include <cstdlib>
 #include <fstream>
 #include <cctype>
+#include <thread>
+#include <vector>
 
 
 #define PORT 8000
@@ -192,51 +193,80 @@ void check_version() {
 void process_command(const std::string& command, SSL* ssl) {
     std::string actual_command;
     if (!validate_api_key(command, actual_command)) {
-        std::string response = "Invalid API key";
+        std::string response = "HTTP/1.1 403 Forbidden\r\n"
+                               "Content-Type: text/plain\r\n"
+                               "Content-Length: 17\r\n\r\n"
+                               "Invalid API key";
         SSL_write(ssl, response.c_str(), response.length());
         return;
     }
 
-    std::string response;
+    std::ostringstream response;
+    response << "HTTP/1.1 200 OK\r\n"
+             << "Content-Type: text/plain\r\n";
+
     if (actual_command == "GET CPU") {
         CpuTime prev_cpu_time, curr_cpu_time;
         get_cpu_times(prev_cpu_time);
-        sleep(1);
+        sleep(1);  // Simulate processing time
         get_cpu_times(curr_cpu_time);
         float cpu_usage = calculate_cpu_usage(prev_cpu_time, curr_cpu_time);
-        std::ostringstream stream;
-        stream << std::fixed << std::setprecision(2) << cpu_usage;
-        response = "CPU Usage: " + stream.str() + "%";
+        response << "Content-Length: " << std::to_string(std::to_string(cpu_usage).length() + 14) << "\r\n\r\n"
+                 << "CPU Usage: " << std::fixed << std::setprecision(2) << cpu_usage << "%";
     } else if (actual_command == "GET DISK") {
-        response = DiskUsage::get_disk_usage("/");
+        std::string disk_usage = DiskUsage::get_disk_usage("/");
+        response << "Content-Length: " << disk_usage.length() << "\r\n\r\n"
+                 << disk_usage;
     } else if (actual_command == "GET MEM") {
-        response = MemoryUsage::get_memory_usage();
+        std::string memory_usage = MemoryUsage::get_memory_usage();
+        response << "Content-Length: " << memory_usage.length() << "\r\n\r\n"
+                 << memory_usage;
     } else if (actual_command == "GET NET") {
-        response = NetworkStats::get_network_stats("wlan0");
+        std::string network_stats = NetworkStats::get_network_stats("wlan0");
+        response << "Content-Length: " << network_stats.length() << "\r\n\r\n"
+                 << network_stats;
     } else {
-        response = "Unknown command";
+        response << "Content-Length: 15\r\n\r\n"
+                 << "Unknown command";
     }
-    SSL_write(ssl, response.c_str(), response.length());  // Send response back to client using SSL
+
+    std::string final_response = response.str();
+    SSL_write(ssl, final_response.c_str(), final_response.length());  // Send response back to client using SSL
+}
+
+void handle_client(int client_socket, SSL_CTX* ctx) {
+    SSL* ssl = SSL_new(ctx);
+    SSL_set_fd(ssl, client_socket);
+
+    if (SSL_accept(ssl) > 0) {
+        char buffer[1024] = {0};
+        while (true) {
+            memset(buffer, 0, sizeof(buffer));
+            int valread = SSL_read(ssl, buffer, sizeof(buffer)-1);
+            if (valread <= 0) {
+                int err = SSL_get_error(ssl, valread);
+                if (err == SSL_ERROR_ZERO_RETURN || err == SSL_ERROR_SYSCALL) {
+                    std::cout << "Client disconnected.\n";
+                    break;
+                }
+            } else {
+                std::string command(buffer, valread);
+                process_command(command, ssl);  // Call process_command without capturing return value
+            }
+        }
+    } else {
+        ERR_print_errors_fp(stderr);
+    }
+
+    SSL_shutdown(ssl);
+    SSL_free(ssl);
+    close(client_socket);
 }
 
 int main(int argc, char* argv[]) {
-    int checkInterval = 60; // Default interval in minutes
-    if (argc > 1) {
-        std::string arg = argv[1];
-        // Check if all characters in the argument are digits
-        if (std::all_of(arg.begin(), arg.end(), ::isdigit)) {
-            checkInterval = std::stoi(arg); // Convert string to integer safely
-        } else {
-            std::cerr << "Invalid interval argument. Please provide a numeric value." << std::endl;
-            return 1; // Return error code
-        }
-    }
-
-    std::thread version_thread([checkInterval]() { periodic_version_check(checkInterval); });
-    
     initializeSSL();
 
-    int server_fd, client_socket;
+    int server_fd;
     struct sockaddr_in address;
     socklen_t addrlen = sizeof(address);
     SSL_CTX* ctx = SSL_CTX_new(TLS_server_method());
@@ -259,46 +289,31 @@ int main(int argc, char* argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    if (listen(server_fd, 3) < 0) {
+    if (listen(server_fd, 10) < 0) {
         perror("listen");
         exit(EXIT_FAILURE);
     }
 
+    std::vector<std::thread> threads;
+
     while (true) {
-        if ((client_socket = accept(server_fd, (struct sockaddr *)&address, &addrlen)) < 0) {
+        int client_socket = accept(server_fd, (struct sockaddr *)&address, &addrlen);
+        if (client_socket < 0) {
             perror("accept");
             continue;
         }
 
-        SSL* ssl = SSL_new(ctx);
-        SSL_set_fd(ssl, client_socket);
-
-        if (SSL_accept(ssl) <= 0) {
-            ERR_print_errors_fp(stderr);
-        } else {
-            char buffer[1024] = {0};
-            while (true) {
-                memset(buffer, 0, sizeof(buffer));
-                int valread = SSL_read(ssl, buffer, sizeof(buffer)-1);
-                if (valread <= 0) {
-                    int err = SSL_get_error(ssl, valread);
-                    if (err == SSL_ERROR_ZERO_RETURN || err == SSL_ERROR_SYSCALL) {
-                        std::cout << "Client disconnected.\n";
-                        break;
-                    }
-                } else {
-                    std::string command(buffer, valread);
-                    process_command(command, ssl);
-                }
-            }
-        }
-
-        SSL_shutdown(ssl);
-        SSL_free(ssl);
-        close(client_socket);
+        // Spawn a new thread for each accepted client connection
+        threads.emplace_back(handle_client, client_socket, ctx);
     }
 
-    version_thread.join();  // Wait for the version checking thread to finish if ever
+    // Join threads (this will block forever in this configuration)
+    for (auto& thread : threads) {
+        if (thread.joinable()) {
+            thread.join();
+        }
+    }
+
     SSL_CTX_free(ctx);
     close(server_fd);
     return 0;

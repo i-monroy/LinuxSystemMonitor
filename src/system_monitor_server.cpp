@@ -23,6 +23,7 @@
 #include <cctype>
 #include <thread>
 #include <vector>
+#include <algorithm> // for std::all_of
 
 
 #define PORT 8000
@@ -294,6 +295,12 @@ int main(int argc, char* argv[]) {
         exit(EXIT_FAILURE);
     }
 
+    // Start the OTA update checking thread
+    int checkInterval = (argc > 1 && std::all_of(argv[1], argv[1] + strlen(argv[1]), ::isdigit))
+                        ? std::stoi(argv[1])
+                        : 60; // Default to 60 minutes if no valid argument provided
+    std::thread version_thread([checkInterval]() { periodic_version_check(checkInterval); });
+
     std::vector<std::thread> threads;
 
     while (true) {
@@ -304,16 +311,20 @@ int main(int argc, char* argv[]) {
         }
 
         // Spawn a new thread for each accepted client connection
-        threads.emplace_back(handle_client, client_socket, ctx);
+        threads.emplace_back([&](int socket) {
+            handle_client(socket, ctx);
+        }, client_socket);
     }
 
-    // Join threads (this will block forever in this configuration)
+    // Join all threads (this will effectively never happen in this setup since the server runs indefinitely)
     for (auto& thread : threads) {
         if (thread.joinable()) {
             thread.join();
         }
     }
 
+    // Clean up and shut down
+    version_thread.join(); // Ensure the version checking thread is also cleanly exited before closing
     SSL_CTX_free(ctx);
     close(server_fd);
     return 0;

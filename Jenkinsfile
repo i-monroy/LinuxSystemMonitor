@@ -1,7 +1,8 @@
 pipeline {
     agent any
 
-    stages {
+  stages {
+    
         stage('Start OTA Server') {
             steps {
                 echo 'Starting OTA Server...'
@@ -9,33 +10,47 @@ pipeline {
                 sleep 10 // Ensures the server is up
             }
         }
-
+    
         stage('Build') {
             steps {
-                echo 'Building the project...'
+                echo 'Building the main project...'
                 sh 'mkdir -p build'
                 sh 'g++ -o build/system_monitor_server src/system_monitor_server.cpp -Iinclude -std=c++11 -pthread -lcurl -lssl -lcrypto -ldl'
             }
         }
 
-        stage('Test') {
+        stage('Start Server') {
             steps {
-                echo 'Running tests...'
-                // Commands to execute your tests
+                echo 'Starting the server...'
+                sh 'nohup ./build/system_monitor_server &'
+                sleep 10 // Wait for the server to initialize
             }
         }
 
-        stage('Archive Artifacts') {
+        stage('Compile and Run Tests') {
             steps {
-                echo 'Archiving executables...'
-                archiveArtifacts artifacts: 'build/system_monitor_server', onlyIfSuccessful: true
+                echo 'Compiling and Running Tests...'
+                sh 'g++ -std=c++17 -isystem /usr/local/include/gtest/ -pthread tests/connection_tests.cpp /usr/local/lib/libgtest.a /usr/local/lib/libgtest_main.a -o tests/connection_tests'
+                sh './tests/connection_tests'
+                sh 'g++ -std=c++17 -isystem /usr/local/include/gtest/ -pthread tests/data_trans_tests.cpp /usr/local/lib/libgtest.a /usr/local/lib/libgtest_main.a -o tests/data_trans_tests -lssl -lcrypto'
+                sh './tests/data_trans_tests'
+            }
+        }
+
+        stage('Shutdown Server') {
+            steps {
+                echo 'Shutting down the server...'
+                // Implement the command to gracefully shutdown your server if possible
+                sh 'pkill -f system_monitor_server'
             }
         }
 
         stage('Cleanup') {
             steps {
-                echo 'Cleaning up temporary files...'
-                sh 'find build/ -type f ! -name "system_monitor_server" -delete'
+                echo 'Cleaning up...'
+                sh 'rm -rf build/*'
+                sh 'rm tests/connection_tests'
+                sh 'rm tests/data_trans_tests'
             }
         }
     }

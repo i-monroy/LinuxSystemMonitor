@@ -6,7 +6,7 @@ pipeline {
             steps {
                 echo 'Starting OTA Server...'
                 sh 'nohup python3 src/ota_server.py &'
-                sleep 10 // Add a delay to ensure the server has started, adjust as necessary
+                sleep 10 // Ensures the server is up
             }
         }
 
@@ -18,26 +18,25 @@ pipeline {
             }
         }
 
-        stage('Archive Artifacts') {
-            steps {
-                echo 'Archiving artifacts...'
-                archiveArtifacts artifacts: '/home/pi/Desktop/LinuxSystemMonitor/build/system_monitor_server', onlyIfSuccessful: true
-            }
-        }
-
-        stage('Set Permissions') {
-            steps {
-                echo 'Setting executable permissions...'
-                sh 'chmod +x /home/pi/Desktop/LinuxSystemMonitor/build/system_monitor_server'
-            }
-        }
-      
         stage('Test') {
             steps {
                 echo 'Running tests...'
-                // Add commands to execute your tests here
+                // Commands to execute your tests
             }
         }
 
+        stage('Archive Artifacts') {
+            steps {
+                echo 'Archiving executables...'
+                archiveArtifacts artifacts: 'build/system_monitor_server', onlyIfSuccessful: true
+            }
+        }
+
+        stage('Cleanup') {
+            steps {
+                echo 'Cleaning up temporary files...'
+                sh 'find build/ -type f ! -name "system_monitor_server" -delete'
+            }
+        }
     }
 }

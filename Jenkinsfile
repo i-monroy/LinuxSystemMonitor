@@ -1,8 +1,7 @@
 pipeline {
     agent any
 
-  stages {
-    
+    stages {
         stage('Start OTA Server') {
             steps {
                 echo 'Starting OTA Server...'
@@ -29,9 +28,12 @@ pipeline {
 
         stage('Compile and Run Tests') {
             steps {
-                echo 'Compiling and Running Tests...'
+                echo 'Ensuring test directory exists...'
+                sh 'mkdir -p tests'
+                echo 'Compiling and Running Connection Tests...'
                 sh 'g++ -std=c++17 -isystem /usr/local/include/gtest/ -pthread tests/connection_tests.cpp /usr/local/lib/libgtest.a /usr/local/lib/libgtest_main.a -o tests/connection_tests'
                 sh './tests/connection_tests'
+                echo 'Compiling and Running Data Transmission Tests...'
                 sh 'g++ -std=c++17 -isystem /usr/local/include/gtest/ -pthread tests/data_trans_tests.cpp /usr/local/lib/libgtest.a /usr/local/lib/libgtest_main.a -o tests/data_trans_tests -lssl -lcrypto'
                 sh './tests/data_trans_tests'
             }
@@ -40,7 +42,6 @@ pipeline {
         stage('Shutdown Server') {
             steps {
                 echo 'Shutting down the server...'
-                // Implement the command to gracefully shutdown your server if possible
                 sh 'pkill -f system_monitor_server'
             }
         }
@@ -49,8 +50,7 @@ pipeline {
             steps {
                 echo 'Cleaning up...'
                 sh 'rm -rf build/*'
-                sh 'rm tests/connection_tests'
-                sh 'rm tests/data_trans_tests'
+                sh 'rm -rf tests/*'
             }
         }
     }

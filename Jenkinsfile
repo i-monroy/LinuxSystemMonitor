@@ -2,14 +2,6 @@ pipeline {
     agent any
 
     stages {
-        stage('Check Environment') {
-            steps {
-                echo 'Checking the current directory and listing files...'
-                sh 'pwd'
-                sh 'ls -la'
-            }
-        }
-
         stage('Start OTA Server') {
             steps {
                 echo 'Starting OTA Server...'
@@ -38,13 +30,11 @@ pipeline {
             steps {
                 echo 'Ensuring test directory exists...'
                 sh 'mkdir -p tests'
-                echo 'Compiling Connection Tests...'
+                echo 'Compiling and Running Connection Tests...'
                 sh 'g++ -std=c++17 -isystem /usr/local/include/gtest/ -pthread tests/connection_tests.cpp /usr/local/lib/libgtest.a /usr/local/lib/libgtest_main.a -o tests/connection_tests'
-                echo 'Running Connection Tests...'
                 sh './tests/connection_tests'
-                echo 'Compiling Data Transmission Tests...'
+                echo 'Compiling and Running Data Transmission Tests...'
                 sh 'g++ -std=c++17 -isystem /usr/local/include/gtest/ -pthread tests/data_trans_tests.cpp /usr/local/lib/libgtest.a /usr/local/lib/libgtest_main.a -o tests/data_trans_tests -lssl -lcrypto'
-                echo 'Running Data Transmission Tests...'
                 sh './tests/data_trans_tests'
             }
         }
@@ -60,8 +50,7 @@ pipeline {
             steps {
                 echo 'Cleaning up...'
                 sh 'rm -rf build/*'
-                sh 'rm tests/connection_tests'
-                sh 'rm tests/data_trans_tests'
+                sh 'rm -rf tests/*'
             }
         }
     }

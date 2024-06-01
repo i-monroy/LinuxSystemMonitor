@@ -1,42 +1,41 @@
 #include <iostream>
 #include <string>
-#include <unistd.h>  
+#include <unistd.h>  // sleep(), close()
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <openssl/ssl.h>
 #include <openssl/err.h>
-#include <cstring>   
-#include <iomanip>   
-#include "cpu_usage.h"  
-#include "disk_usage.h" 
+#include <cstring>   // for memset()
+#include <iomanip>   // for std::setprecision
+#include "cpu_usage.h"  // Include the header file for CPU usage functions
+#include "disk_usage.h" // Include the header file for disk usage functions
 #include "memory_usage.h"
 #include "network_stats.h"
 #include <iostream>
 #include <string>
-#include <nlohmann/json.hpp>  
+#include <nlohmann/json.hpp>
 #include <fstream>
-#include <curl/curl.h>  
+#include <curl/curl.h>
 #include <chrono>
-#include <openssl/sha.h>  
+#include <openssl/sha.h>
 #include <cstdlib>
 #include <fstream>
 #include <cctype>
-#include <thread> 
+#include <thread>
 #include <vector>
-#include <algorithm> 
+#include <algorithm> // for std::all_of
 
-#define PORT 8000  // Define the port number for the server
-const std::string API_KEY = "enter API key"; // API key for authentication
 
-using json = nlohmann::json;  // Use the nlohmann json namespace
+#define PORT 8000
+const std::string API_KEY = "4ee511cfc743e7033b7451e090c6b00b"; // Your API key
 
-// Initializes the SSL libraries
+using json = nlohmann::json;
+
 void initializeSSL() {
     SSL_load_error_strings();
     OpenSSL_add_ssl_algorithms();
 }
 
-// Validates the API key from the incoming command
 bool validate_api_key(const std::string& command, std::string& actual_command) {
     size_t separator = command.find(':');
     if (separator != std::string::npos) {
@@ -47,7 +46,6 @@ bool validate_api_key(const std::string& command, std::string& actual_command) {
     return false;
 }
 
-// Callback for writing received data in curl calls
 static size_t WriteCallback(void *contents, size_t size, size_t nmemb, std::string *s) {
     size_t newLength = size * nmemb;
     try {
@@ -60,7 +58,12 @@ static size_t WriteCallback(void *contents, size_t size, size_t nmemb, std::stri
     }
 }
 
-// Downloads file from a given URL
+// Helper function to download file
+static size_t write_data(void *ptr, size_t size, size_t nmemb, FILE *stream) {
+    size_t written = fwrite(ptr, size, nmemb, stream);
+    return written;
+}
+
 void download_update(const std::string& url, const std::string& output_path) {
     CURL *curl;
     FILE *fp;
@@ -90,7 +93,7 @@ void download_update(const std::string& url, const std::string& output_path) {
     }
 }
 
-// Computes SHA-256 hash of a file
+
 std::string calculate_sha256(const std::string& file_path) {
     unsigned char hash[SHA256_DIGEST_LENGTH];
     SHA256_CTX sha256;
@@ -121,21 +124,22 @@ std::string calculate_sha256(const std::string& file_path) {
     return ss.str();
 }
 
-// Applies the downloaded update
 void apply_update(const std::string& path) {
     std::cout << "Applying update from: " << path << std::endl;
-    std::string command = "cp " + path + " ./build/system_monitor_server"; // Command to replace the executable
+    // Example command to replace an executable file (adjust as needed)
+    std::string command = "cp " + path + " ./build/system_monitor_server";
     std::system(command.c_str());
     std::cout << "Update applied. Restart the application to use the updated version." << std::endl;
 }
 
-// Logs messages to a file
 void log_message(const std::string& message) {
     std::ofstream logFile("update_log.txt", std::ios::app); // Open in append mode
     logFile << message << std::endl;
 }
 
-// Checks for updates periodically
+void check_version(); // Forward declaration
+
+// Function to periodically check for updates
 void periodic_version_check(int intervalMinutes) {
     while (true) {
         check_version();
@@ -143,7 +147,6 @@ void periodic_version_check(int intervalMinutes) {
     }
 }
 
-// Checks for updates by contacting a version check server
 void check_version() {
     log_message("Checking for updates...");
     CURL *curl;
@@ -163,9 +166,9 @@ void check_version() {
             json response = json::parse(readBuffer);
             std::string latest_version = response["version"];
             std::string update_url = response["update_url"];
-            std::string expected_checksum = response["checksum"]; // Check if this key exists in your server response
-
-            std::string current_version = "1.0.0"; // Assume the current version is defined elsewhere
+            std::string expected_checksum = response["checksum"]; // Make sure this key exists in your Python server response
+            
+            std::string current_version = "1.0.0"; // Assume current version is defined elsewhere or hardcoded
             if(latest_version != current_version) {
                 std::cout << "New version available: " << latest_version << std::endl;
                 std::string download_path = "./update.zip";
@@ -188,7 +191,6 @@ void check_version() {
     }
 }
 
-// Processes commands received over SSL connection
 void process_command(const std::string& command, SSL* ssl) {
     std::string actual_command;
     if (!validate_api_key(command, actual_command)) {
@@ -233,7 +235,6 @@ void process_command(const std::string& command, SSL* ssl) {
     SSL_write(ssl, final_response.c_str(), final_response.length());  // Send response back to client using SSL
 }
 
-// Handles each client connection in a separate thread
 void handle_client(int client_socket, SSL_CTX* ctx) {
     SSL* ssl = SSL_new(ctx);
     SSL_set_fd(ssl, client_socket);
@@ -251,38 +252,34 @@ void handle_client(int client_socket, SSL_CTX* ctx) {
                 }
             } else {
                 std::string command(buffer, valread);
-                process_command(command, ssl);  // Process the received command
+                process_command(command, ssl);  // Call process_command without capturing return value
             }
         }
     } else {
-        ERR_print_errors_fp(stderr);  // Print SSL errors to the error output
+        ERR_print_errors_fp(stderr);
     }
 
-    SSL_shutdown(ssl);  // Shutdown the SSL connection
-    SSL_free(ssl);      // Free the SSL structure
-    close(client_socket);  // Close the socket
+    SSL_shutdown(ssl);
+    SSL_free(ssl);
+    close(client_socket);
 }
 
-// Main function to set up the SSL server and handle connections
 int main(int argc, char* argv[]) {
-    initializeSSL();  // Initialize SSL
+    initializeSSL();
 
-    int server_fd;  // Server socket descriptor
-    struct sockaddr_in address;  // Socket address structure
-    socklen_t addrlen = sizeof(address);  // Address length
-    SSL_CTX* ctx = SSL_CTX_new(TLS_server_method());  // Create a new SSL context for the server
+    int server_fd;
+    struct sockaddr_in address;
+    socklen_t addrlen = sizeof(address);
+    SSL_CTX* ctx = SSL_CTX_new(TLS_server_method());
 
-    // Set the SSL certificates
     SSL_CTX_use_certificate_file(ctx, "server.crt", SSL_FILETYPE_PEM);
     SSL_CTX_use_PrivateKey_file(ctx, "server.key", SSL_FILETYPE_PEM);
 
-    // Create a socket
     if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
         perror("socket failed");
         exit(EXIT_FAILURE);
     }
 
-    // Set socket options and bind it to the specified port and IP
     memset(&address, 0, sizeof(address));
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = INADDR_ANY;
@@ -293,7 +290,6 @@ int main(int argc, char* argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    // Start listening on the socket
     if (listen(server_fd, 10) < 0) {
         perror("listen");
         exit(EXIT_FAILURE);
@@ -305,9 +301,8 @@ int main(int argc, char* argv[]) {
                         : 60; // Default to 60 minutes if no valid argument provided
     std::thread version_thread([checkInterval]() { periodic_version_check(checkInterval); });
 
-    std::vector<std::thread> threads;  // Vector to hold threads for each client
+    std::vector<std::thread> threads;
 
-    // Accept connections indefinitely
     while (true) {
         int client_socket = accept(server_fd, (struct sockaddr *)&address, &addrlen);
         if (client_socket < 0) {
@@ -315,7 +310,7 @@ int main(int argc, char* argv[]) {
             continue;
         }
 
-        // Handle each client in a separate thread
+        // Spawn a new thread for each accepted client connection
         threads.emplace_back([&](int socket) {
             handle_client(socket, ctx);
         }, client_socket);

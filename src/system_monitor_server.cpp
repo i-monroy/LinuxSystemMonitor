@@ -1,14 +1,14 @@
 #include <iostream>
 #include <string>
-#include <unistd.h>  // sleep(), close()
+#include <unistd.h>  
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <openssl/ssl.h>
 #include <openssl/err.h>
-#include <cstring>   // for memset()
-#include <iomanip>   // for std::setprecision
-#include "cpu_usage.h"  // Include the header file for CPU usage functions
-#include "disk_usage.h" // Include the header file for disk usage functions
+#include <cstring>   
+#include <iomanip>   
+#include "cpu_usage.h"  
+#include "disk_usage.h" 
 #include "memory_usage.h"
 #include "network_stats.h"
 #include <iostream>
@@ -23,19 +23,21 @@
 #include <cctype>
 #include <thread>
 #include <vector>
-#include <algorithm> // for std::all_of
+#include <algorithm> 
 
 
 #define PORT 8000
-const std::string API_KEY = "4ee511cfc743e7033b7451e090c6b00b"; // Your API key
+const std::string API_KEY = "4ee511cfc743e7033b7451e090c6b00b"; // API key for authorization
 
 using json = nlohmann::json;
 
+// Initialize SSL libraries
 void initializeSSL() {
-    SSL_load_error_strings();
-    OpenSSL_add_ssl_algorithms();
+    SSL_load_error_strings(); // Load all error messages
+    OpenSSL_add_ssl_algorithms(); // Register all available encryption algorithms
 }
 
+// Validates the API key from the incoming command
 bool validate_api_key(const std::string& command, std::string& actual_command) {
     size_t separator = command.find(':');
     if (separator != std::string::npos) {
@@ -46,6 +48,7 @@ bool validate_api_key(const std::string& command, std::string& actual_command) {
     return false;
 }
 
+// Callback for writing received data
 static size_t WriteCallback(void *contents, size_t size, size_t nmemb, std::string *s) {
     size_t newLength = size * nmemb;
     try {
@@ -53,7 +56,7 @@ static size_t WriteCallback(void *contents, size_t size, size_t nmemb, std::stri
         return newLength;
     }
     catch (std::bad_alloc &e) {
-        // handle memory problem
+        // Handle memory allocation errors
         return 0;
     }
 }
@@ -64,6 +67,7 @@ static size_t write_data(void *ptr, size_t size, size_t nmemb, FILE *stream) {
     return written;
 }
 
+// Downloads a file using cURL
 void download_update(const std::string& url, const std::string& output_path) {
     CURL *curl;
     FILE *fp;
@@ -93,7 +97,7 @@ void download_update(const std::string& url, const std::string& output_path) {
     }
 }
 
-
+// Calculates SHA256 checksum for a file
 std::string calculate_sha256(const std::string& file_path) {
     unsigned char hash[SHA256_DIGEST_LENGTH];
     SHA256_CTX sha256;
@@ -124,6 +128,7 @@ std::string calculate_sha256(const std::string& file_path) {
     return ss.str();
 }
 
+// Applies the downloaded update
 void apply_update(const std::string& path) {
     std::cout << "Applying update from: " << path << std::endl;
     // Example command to replace an executable file (adjust as needed)
@@ -132,6 +137,7 @@ void apply_update(const std::string& path) {
     std::cout << "Update applied. Restart the application to use the updated version." << std::endl;
 }
 
+// Logs messages to a file
 void log_message(const std::string& message) {
     std::ofstream logFile("update_log.txt", std::ios::app); // Open in append mode
     logFile << message << std::endl;
@@ -139,7 +145,7 @@ void log_message(const std::string& message) {
 
 void check_version(); // Forward declaration
 
-// Function to periodically check for updates
+// Periodically checks for updates
 void periodic_version_check(int intervalMinutes) {
     while (true) {
         check_version();
@@ -147,6 +153,7 @@ void periodic_version_check(int intervalMinutes) {
     }
 }
 
+// Checks for the latest software version
 void check_version() {
     log_message("Checking for updates...");
     CURL *curl;
@@ -191,6 +198,7 @@ void check_version() {
     }
 }
 
+// Processes incoming commands and sends responses
 void process_command(const std::string& command, SSL* ssl) {
     std::string actual_command;
     if (!validate_api_key(command, actual_command)) {
@@ -235,6 +243,7 @@ void process_command(const std::string& command, SSL* ssl) {
     SSL_write(ssl, final_response.c_str(), final_response.length());  // Send response back to client using SSL
 }
 
+// Handles each client connection
 void handle_client(int client_socket, SSL_CTX* ctx) {
     SSL* ssl = SSL_new(ctx);
     SSL_set_fd(ssl, client_socket);
@@ -264,6 +273,7 @@ void handle_client(int client_socket, SSL_CTX* ctx) {
     close(client_socket);
 }
 
+// Main function to set up the SSL server
 int main(int argc, char* argv[]) {
     initializeSSL();
 

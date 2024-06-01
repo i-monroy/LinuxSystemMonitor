@@ -18,13 +18,13 @@ pipeline {
             }
         }
 
-        // stage('Start Server') {
-        //     steps {
-        //         echo 'Starting the server...'
-        //         sh 'nohup ./build/system_monitor_server &'
-        //         sleep 10 // Wait for the server to initialize
-        //     }
-        // }
+        stage('Start Server') {
+            steps {
+                echo 'Starting the server...'
+                sh 'nohup ./build/system_monitor_server &'
+                sleep 10 // Wait for the server to initialize
+            }
+        }
 
         // stage('Compile and Run Tests') {
         //     steps {

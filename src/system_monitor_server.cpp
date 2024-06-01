@@ -26,7 +26,7 @@
 #include <algorithm> 
 
 #define PORT 8000  // Define the port number for the server
-const std::string API_KEY = "4ee511cfc743e7033b7451e090c6b00b"; // API key for authentication
+const std::string API_KEY = "enter API key"; // API key for authentication
 
 using json = nlohmann::json;  // Use the nlohmann json namespace
 
